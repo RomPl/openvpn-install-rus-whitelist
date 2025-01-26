@@ -73,6 +73,16 @@ if [ ${#WHITELIST[@]} -eq 0 ]; then
   exit 1
 fi
 
+# Предлагаем добавить новые домены
+echo
+read -p "Хотите добавить новые сайты (через запятую)? (Enter, если нет): " USER_SITES
+if [ -n "$USER_SITES" ]; then
+  IFS=',' read -ra NEW_SITES <<< "$(echo "$USER_SITES" | sed 's/[[:space:]]//g')"
+  for site in "${NEW_SITES[@]}"; do
+    [ -n "$site" ] && WHITELIST+=("$site")
+  done
+fi
+
 # Обработка каждого домена
 for site in "${WHITELIST[@]}"; do
   echo "Обрабатываем домен: $site"
