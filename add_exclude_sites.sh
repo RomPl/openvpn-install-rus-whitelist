@@ -1,7 +1,8 @@
 #!/bin/bash
 
 ########################################
-# Скрипт для добавления исключений (whitelist) с отладкой
+# Скрипт для обработки whitelist
+# Проверяет наличие IP-адресов в rules.v4 перед добавлением
 ########################################
 
 # Проверка прав root
@@ -43,6 +44,7 @@ fi
 
 # Основная логика
 WHITELIST_FILE="whitelist"
+RULES_FILE="/etc/iptables/rules.v4"
 
 # Проверка файла whitelist
 if [ ! -f "$WHITELIST_FILE" ]; then
@@ -84,6 +86,7 @@ if [ -n "$USER_SITES" ]; then
 fi
 
 # Обработка каждого домена
+IP_RULES=""
 for site in "${WHITELIST[@]}"; do
   echo "Обрабатываем домен: $site"
   
@@ -99,11 +102,16 @@ for site in "${WHITELIST[@]}"; do
     echo "$IP_LIST"
   fi
 
-  # Добавление правил в iptables
+  # Проверка каждого IP-адреса в rules.v4
   while IFS= read -r ipaddr; do
-    echo "Добавляем iptables-правило для $site ($ipaddr)"
-    iptables -t nat -A POSTROUTING -d "$ipaddr" -j ACCEPT
-    iptables -t mangle -A PREROUTING -d "$ipaddr" -j ACCEPT
+    if grep -q "$ipaddr" "$RULES_FILE"; then
+      echo "IP $ipaddr уже присутствует в $RULES_FILE. Пропуск..."
+    else
+      echo "Добавляем правило для $site ($ipaddr)"
+      IP_RULES+="
+-A POSTROUTING -t nat -d $ipaddr -j ACCEPT
+-A PREROUTING -t mangle -d $ipaddr -j ACCEPT"
+    fi
   done <<< "$IP_LIST"
 done
 
@@ -113,13 +121,31 @@ if [ ! -d "/etc/iptables" ]; then
   mkdir -p /etc/iptables
 fi
 
-# Сохранение правил iptables
-echo "Сохраняем правила iptables..."
-iptables-save > /etc/iptables/rules.v4
+# Добавление правил в /etc/iptables/rules.v4
+echo "Добавляем правила в /etc/iptables/rules.v4..."
+{
+  echo "*nat"
+  echo ":PREROUTING ACCEPT [0:0]"
+  echo ":INPUT ACCEPT [0:0]"
+  echo ":OUTPUT ACCEPT [0:0]"
+  echo ":POSTROUTING ACCEPT [0:0]"
+  echo "$IP_RULES"
+  echo "COMMIT"
+  echo "*mangle"
+  echo ":PREROUTING ACCEPT [0:0]"
+  echo ":INPUT ACCEPT [0:0]"
+  echo ":FORWARD ACCEPT [0:0]"
+  echo ":OUTPUT ACCEPT [0:0]"
+  echo ":POSTROUTING ACCEPT [0:0]"
+  echo "$IP_RULES"
+  echo "COMMIT"
+  echo "### END OF RULES ###"
+} > "$RULES_FILE"
+
 if [ $? -eq 0 ]; then
-  echo "Правила iptables успешно сохранены в /etc/iptables/rules.v4."
+  echo "Правила успешно добавлены в $RULES_FILE."
 else
-  echo "Ошибка сохранения правил iptables в /etc/iptables/rules.v4!"
+  echo "Ошибка при добавлении правил в $RULES_FILE!"
   exit 1
 fi
 
