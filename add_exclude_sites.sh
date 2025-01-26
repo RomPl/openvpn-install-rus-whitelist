@@ -2,7 +2,7 @@
 
 ########################################
 # Скрипт для обработки whitelist
-# Проверяет наличие IP-адресов в rules.v4 перед добавлением
+# Добавляет IP адреса доменов в /etc/iptables/rules.v4
 ########################################
 
 # Проверка прав root
@@ -54,17 +54,21 @@ if [ ! -f "$WHITELIST_FILE" ]; then
   echo "Примерный файл $WHITELIST_FILE создан."
 fi
 
+# Читаем содержимое файла whitelist.txt
+echo "Читаем домены из файла $WHITELIST_FILE:"
+cat "$WHITELIST_FILE"
+
 # Чтение доменов из файла
 declare -a WHITELIST
 while IFS= read -r line; do
-  line="$(echo "$line" | xargs)" # Убираем пробелы
+  line="$(echo "$line" | xargs)" # Убираем лишние пробелы
   if [ -n "$line" ]; then
     WHITELIST+=("$line")
   fi
 done < "$WHITELIST_FILE"
 
 # Отладка: вывод списка доменов
-echo "Доменов в whitelist: ${#WHITELIST[@]}"
+echo "Домены для обработки:"
 for site in "${WHITELIST[@]}"; do
   echo " - $site"
 done
@@ -73,16 +77,6 @@ done
 if [ ${#WHITELIST[@]} -eq 0 ]; then
   echo "Список доменов пуст. Завершаем скрипт."
   exit 1
-fi
-
-# Предлагаем добавить новые домены
-echo
-read -p "Хотите добавить новые сайты (через запятую)? (Enter, если нет): " USER_SITES
-if [ -n "$USER_SITES" ]; then
-  IFS=',' read -ra NEW_SITES <<< "$(echo "$USER_SITES" | sed 's/[[:space:]]//g')"
-  for site in "${NEW_SITES[@]}"; do
-    [ -n "$site" ] && WHITELIST+=("$site")
-  done
 fi
 
 # Обработка каждого домена
@@ -102,7 +96,7 @@ for site in "${WHITELIST[@]}"; do
     echo "$IP_LIST"
   fi
 
-  # Проверка каждого IP-адреса в rules.v4
+  # Генерация правил iptables
   while IFS= read -r ipaddr; do
     if grep -q "$ipaddr" "$RULES_FILE"; then
       echo "IP $ipaddr уже присутствует в $RULES_FILE. Пропуск..."
