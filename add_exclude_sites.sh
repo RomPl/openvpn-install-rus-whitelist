@@ -43,7 +43,7 @@ if ! command -v iptables &>/dev/null; then
 fi
 
 # Основная логика
-WHITELIST_FILE="whitelist"
+WHITELIST_FILE="whitelist.txt"
 RULES_FILE="/etc/iptables/rules.v4"
 
 # Проверка файла whitelist
