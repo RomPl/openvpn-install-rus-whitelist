@@ -116,12 +116,12 @@ if [ ! -d "/etc/iptables" ]; then
   mkdir -p /etc/iptables
 fi
 
-# Сохраняем правила iptables в /etc/iptables/rules.v4
-iptables-save > /etc/iptables/rules.v4
-if [ $? -eq 0 ]; then
-  echo "Правила iptables успешно сохранены в /etc/iptables/rules.v4."
+# Сохраняем правила iptables
+echo "Сохраняем правила iptables..."
+if iptables-save > /etc/iptables/rules.v4; then
+  echo "Правила успешно сохранены в /etc/iptables/rules.v4."
 else
-  echo "Ошибка сохранения правил iptables в /etc/iptables/rules.v4."
+  echo "Ошибка при сохранении правил! Проверьте права доступа или содержимое iptables."
   exit 1
 fi
 
