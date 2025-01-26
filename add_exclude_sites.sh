@@ -1,59 +1,13 @@
 #!/bin/bash
 
 ########################################
-# Скрипт для добавления сайтов исключений (whitelist)
-# Проверка/установка зависимостей (dig, iptables)
-# Добавление iptables-правил для обхода VPN
+# Скрипт для добавления исключений сайтов (whitelist)
+# Автоматически устанавливает iptables-persistent
+# Сохраняет правила iptables и обрабатывает список сайтов
 ########################################
 
 ########################################
-# 1. Определение менеджера пакетов
-########################################
-detect_package_manager() {
-  if command -v apt-get &>/dev/null; then
-    echo "apt-get"
-  elif command -v yum &>/dev/null; then
-    echo "yum"
-  elif command -v dnf &>/dev/null; then
-    echo "dnf"
-  elif command -v pacman &>/dev/null; then
-    echo "pacman"
-  else
-    echo "unknown"
-  fi
-}
-
-########################################
-# 2. Установка необходимых пакетов
-########################################
-install_packages() {
-  local packages=("$@")
-  local pkg_manager
-  pkg_manager=$(detect_package_manager)
-
-  case "$pkg_manager" in
-    apt-get)
-      apt-get update -y
-      apt-get install -y "${packages[@]}"
-      ;;
-    yum)
-      yum install -y "${packages[@]}"
-      ;;
-    dnf)
-      dnf install -y "${packages[@]}"
-      ;;
-    pacman)
-      pacman -Sy --noconfirm "${packages[@]}"
-      ;;
-    *)
-      echo "Не удалось определить менеджер пакетов. Установите вручную: ${packages[*]}"
-      exit 1
-      ;;
-  esac
-}
-
-########################################
-# 3. Проверка прав root
+# Проверка прав root
 ########################################
 if [ "$(id -u)" -ne 0 ]; then
   echo "Запустите этот скрипт с правами root!"
@@ -61,25 +15,36 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ########################################
-# 4. Проверка/установка dig
+# Проверка/установка iptables-persistent
+########################################
+if ! dpkg -l | grep -qw iptables-persistent; then
+  echo "iptables-persistent не установлен. Устанавливаем..."
+  apt-get update -y && apt-get install -y iptables-persistent
+  if [ $? -eq 0 ]; then
+    echo "iptables-persistent успешно установлен."
+  else
+    echo "Ошибка установки iptables-persistent. Завершение скрипта."
+    exit 1
+  fi
+else
+  echo "iptables-persistent уже установлен."
+fi
+
+########################################
+# Проверка наличия утилит dig и iptables
 ########################################
 if ! command -v dig &>/dev/null; then
   echo "Утилита 'dig' не найдена. Устанавливаем..."
-  # dnsutils – для Debian/Ubuntu
-  # bind-utils – для CentOS/Fedora
-  install_packages dnsutils bind-utils
+  apt-get install -y dnsutils
 fi
 
-########################################
-# 5. Проверка/установка iptables
-########################################
 if ! command -v iptables &>/dev/null; then
   echo "Утилита 'iptables' не найдена. Устанавливаем..."
-  install_packages iptables
+  apt-get install -y iptables
 fi
 
 ########################################
-# 6. Основная логика
+# Основная логика
 ########################################
 
 # Файл со списком доменов
@@ -124,7 +89,7 @@ for site in "${WHITELIST[@]}"; do
 done
 echo
 
-# Обрабатываем каждый домен
+# Проходим по каждому домену
 for site in "${WHITELIST[@]}"; do
   # Получаем список IP-адресов
   IP_LIST=$(dig +short "$site" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
@@ -142,15 +107,27 @@ for site in "${WHITELIST[@]}"; do
   done <<< "$IP_LIST"
 done
 
-# Сохраняем правила (если iptables-persistent установлен)
-if [ -f /etc/iptables/rules.v4 ]; then
-  iptables-save > /etc/iptables/rules.v4
-  echo "Правила iptables сохранены в /etc/iptables/rules.v4."
-else
-  echo "Файл /etc/iptables/rules.v4 не найден. Создаём..."
-  iptables-save > /etc/iptables/rules.v4
+########################################
+# Сохранение правил iptables
+########################################
+# Проверяем наличие каталога /etc/iptables
+if [ ! -d "/etc/iptables" ]; then
+  echo "Каталог /etc/iptables не найден. Создаём..."
+  mkdir -p /etc/iptables
 fi
 
+# Сохраняем правила iptables в /etc/iptables/rules.v4
+iptables-save > /etc/iptables/rules.v4
+if [ $? -eq 0 ]; then
+  echo "Правила iptables успешно сохранены в /etc/iptables/rules.v4."
+else
+  echo "Ошибка сохранения правил iptables в /etc/iptables/rules.v4."
+  exit 1
+fi
+
+########################################
+# Обновление файла whitelist
+########################################
 # Перезаписываем файл whitelist (на случай новых доменов)
 {
   for site in "${WHITELIST[@]}"; do
