@@ -3,6 +3,7 @@ music.yandex.ru
 ya.ru
 gosuslugi.ru
 nalog.ru
+livemaster.ru
 ozon.ru
 wildberries.ru
 avito.ru
@@ -29,3 +30,7 @@ qiwi.com
 webmoney.ru
 rzd.ru
 mos.ru
+pytorch.org
+megamarket.ru
+kaiten.ru
+rubezh.ru

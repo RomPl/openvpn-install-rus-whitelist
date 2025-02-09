@@ -2,42 +2,45 @@
 
 ########################################
 # Скрипт для обработки whitelist
-# Добавляет IP адреса доменов в /etc/iptables/rules.v4
+# Добавляет IP-адреса доменов в /etc/iptables/rules.v4
 ########################################
+
+LOG_FILE="/var/log/openvpn_whitelist.log"
+echo "===== Начало выполнения скрипта: $(date) =====" | tee -a "$LOG_FILE"
 
 # Проверка прав root
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Запустите этот скрипт с правами root!"
+  echo "Ошибка: Запустите этот скрипт с правами root!" | tee -a "$LOG_FILE"
   exit 1
 fi
 
 # Проверка/установка iptables-persistent
 if ! dpkg -l | grep -qw iptables-persistent; then
-  echo "iptables-persistent не установлен. Устанавливаем..."
+  echo "iptables-persistent не установлен. Устанавливаем..." | tee -a "$LOG_FILE"
   apt-get update -y && apt-get install -y iptables-persistent
   if [ $? -ne 0 ]; then
-    echo "Ошибка установки iptables-persistent. Завершение скрипта."
+    echo "Ошибка установки iptables-persistent. Завершение скрипта." | tee -a "$LOG_FILE"
     exit 1
   fi
 else
-  echo "iptables-persistent уже установлен."
+  echo "iptables-persistent уже установлен." | tee -a "$LOG_FILE"
 fi
 
 # Проверка наличия утилит dig и iptables
 if ! command -v dig &>/dev/null; then
-  echo "Утилита 'dig' не найдена. Устанавливаем..."
+  echo "Утилита 'dig' не найдена. Устанавливаем..." | tee -a "$LOG_FILE"
   apt-get install -y dnsutils
   if [ $? -ne 0 ]; then
-    echo "Ошибка установки dnsutils (dig). Завершение скрипта."
+    echo "Ошибка установки dnsutils (dig). Завершение скрипта." | tee -a "$LOG_FILE"
     exit 1
   fi
 fi
 
 if ! command -v iptables &>/dev/null; then
-  echo "Утилита 'iptables' не найдена. Устанавливаем..."
+  echo "Утилита 'iptables' не найдена. Устанавливаем..." | tee -a "$LOG_FILE"
   apt-get install -y iptables
   if [ $? -ne 0 ]; then
-    echo "Ошибка установки iptables. Завершение скрипта."
+    echo "Ошибка установки iptables. Завершение скрипта." | tee -a "$LOG_FILE"
     exit 1
   fi
 fi
@@ -48,107 +51,39 @@ RULES_FILE="/etc/iptables/rules.v4"
 
 # Проверка файла whitelist
 if [ ! -f "$WHITELIST_FILE" ]; then
-  echo "Файл $WHITELIST_FILE не найден. Создаём пример..."
-  echo "example.com" > "$WHITELIST_FILE"
-  echo "test.local" >> "$WHITELIST_FILE"
-  echo "Примерный файл $WHITELIST_FILE создан."
+  echo "Ошибка: Файл $WHITELIST_FILE не найден!" | tee -a "$LOG_FILE"
+  exit 1
 fi
 
-# Читаем содержимое файла whitelist.txt
-echo "Читаем домены из файла $WHITELIST_FILE:"
-cat "$WHITELIST_FILE"
+# Очистка предыдущих правил (если необходимо)
+echo "Очистка старых правил..." | tee -a "$LOG_FILE"
+iptables -F WHITELIST 2>/dev/null
+iptables -N WHITELIST 2>/dev/null
+iptables -A OUTPUT -j WHITELIST
 
-# Чтение доменов из файла
-declare -a WHITELIST
-while IFS= read -r line; do
-  line="$(echo "$line" | xargs)" # Убираем лишние пробелы
-  if [ -n "$line" ]; then
-    WHITELIST+=("$line")
+# Обработка списка доменов
+while read -r site; do
+  if [[ -n "$site" ]]; then
+    ip=$(dig +short "$site" | head -n 1)
+    if [[ -n "$ip" ]]; then
+      echo "Добавляем правило для $site ($ip)" | tee -a "$LOG_FILE"
+      iptables -A WHITELIST -d "$ip" -j ACCEPT
+    else
+      echo "Ошибка: Не удалось получить IP для $site" | tee -a "$LOG_FILE"
+    fi
   fi
 done < "$WHITELIST_FILE"
 
-# Отладка: вывод списка доменов
-echo "Домены для обработки:"
-for site in "${WHITELIST[@]}"; do
-  echo " - $site"
-done
+# Сохранение правил
+iptables-save > "$RULES_FILE"
+netfilter-persistent save
 
-# Проверяем, если домены не найдены
-if [ ${#WHITELIST[@]} -eq 0 ]; then
-  echo "Список доменов пуст. Завершаем скрипт."
-  exit 1
-fi
-
-# Обработка каждого домена
-IP_RULES=""
-for site in "${WHITELIST[@]}"; do
-  echo "Обрабатываем домен: $site"
-  
-  # Получение IP-адресов через dig
-  IP_LIST=$(dig +short "$site" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-  
-  # Отладка: вывод IP-адресов
-  if [ -z "$IP_LIST" ]; then
-    echo "Не удалось получить IP-адреса для $site. Пропуск..."
-    continue
-  else
-    echo "Найдены IP-адреса для $site:"
-    echo "$IP_LIST"
-  fi
-
-  # Генерация правил iptables
-  while IFS= read -r ipaddr; do
-    if grep -q "$ipaddr" "$RULES_FILE"; then
-      echo "IP $ipaddr уже присутствует в $RULES_FILE. Пропуск..."
-    else
-      echo "Добавляем правило для $site ($ipaddr)"
-      IP_RULES+="
--A POSTROUTING -t nat -d $ipaddr -j ACCEPT
--A PREROUTING -t mangle -d $ipaddr -j ACCEPT"
-    fi
-  done <<< "$IP_LIST"
-done
-
-# Проверка каталога /etc/iptables
-if [ ! -d "/etc/iptables" ]; then
-  echo "Каталог /etc/iptables не найден. Создаём..."
-  mkdir -p /etc/iptables
-fi
-
-# Добавление правил в /etc/iptables/rules.v4
-echo "Добавляем правила в /etc/iptables/rules.v4..."
-{
-  echo "*nat"
-  echo ":PREROUTING ACCEPT [0:0]"
-  echo ":INPUT ACCEPT [0:0]"
-  echo ":OUTPUT ACCEPT [0:0]"
-  echo ":POSTROUTING ACCEPT [0:0]"
-  echo "$IP_RULES"
-  echo "COMMIT"
-  echo "*mangle"
-  echo ":PREROUTING ACCEPT [0:0]"
-  echo ":INPUT ACCEPT [0:0]"
-  echo ":FORWARD ACCEPT [0:0]"
-  echo ":OUTPUT ACCEPT [0:0]"
-  echo ":POSTROUTING ACCEPT [0:0]"
-  echo "$IP_RULES"
-  echo "COMMIT"
-  echo "### END OF RULES ###"
-} > "$RULES_FILE"
-
-if [ $? -eq 0 ]; then
-  echo "Правила успешно добавлены в $RULES_FILE."
+# Проверка, были ли правила действительно добавлены
+if iptables -L WHITELIST -v -n | grep -q ACCEPT; then
+  echo "Правила успешно применены!" | tee -a "$LOG_FILE"
 else
-  echo "Ошибка при добавлении правил в $RULES_FILE!"
-  exit 1
+  echo "Ошибка: правила не применены!" | tee -a "$LOG_FILE"
 fi
 
-# Обновление файла whitelist
-echo "Обновляем файл whitelist..."
-{
-  for site in "${WHITELIST[@]}"; do
-    echo "$site"
-  done
-} > "$WHITELIST_FILE"
-
-echo "Скрипт завершён успешно."
+echo "===== Завершение скрипта: $(date) =====" | tee -a "$LOG_FILE"
+exit 0
