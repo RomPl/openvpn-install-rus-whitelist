@@ -64,12 +64,12 @@ iptables -A OUTPUT -j WHITELIST
 # Обработка списка доменов
 while read -r site; do
   if [[ -n "$site" ]]; then
-    ip=$(dig +short "$site" | head -n 1)
+    ip=$(dig +short "$site" | grep -Eo "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -n 1)
     if [[ -n "$ip" ]]; then
       echo "Добавляем правило для $site ($ip)" | tee -a "$LOG_FILE"
       iptables -A WHITELIST -d "$ip" -j ACCEPT
     else
-      echo "Ошибка: Не удалось получить IP для $site" | tee -a "$LOG_FILE"
+      echo "Ошибка: Не удалось получить IP для $site, возможно, проблемы с DNS." | tee -a "$LOG_FILE"
     fi
   fi
 done < "$WHITELIST_FILE"
